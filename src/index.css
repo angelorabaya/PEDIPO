@@ -1,0 +1,179 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+@plugin "daisyui" {
+  themes:
+    corporate --default,
+    business --prefersdark;
+}
+
+:root {
+  font-family: "Manrope", sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+[data-theme="corporate"] {
+  --color-base-100: #faf8f3;
+  --color-base-200: #f3f0e8;
+  --color-base-300: #e5e0d3;
+}
+
+.magic-grid-pattern {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--color-base-content) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-base-content) 8%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at center, black 32%, transparent 78%);
+  opacity: 0.26;
+}
+
+.magic-gradient-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(60px);
+  opacity: 0.4;
+}
+
+.magic-gradient-orb-a {
+  width: 34rem;
+  height: 34rem;
+  background: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  top: -12rem;
+  left: -6rem;
+  animation: magic-float-a 14s ease-in-out infinite alternate;
+}
+
+.magic-gradient-orb-b {
+  width: 28rem;
+  height: 28rem;
+  background: color-mix(in srgb, var(--color-secondary) 44%, transparent);
+  bottom: -10rem;
+  right: -8rem;
+  animation: magic-float-b 16s ease-in-out infinite alternate;
+}
+
+@keyframes magic-float-a {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+
+  to {
+    transform: translate3d(72px, 36px, 0);
+  }
+}
+
+@keyframes magic-float-b {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+
+  to {
+    transform: translate3d(-56px, -30px, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .magic-gradient-orb-a,
+  .magic-gradient-orb-b {
+    animation: none;
+  }
+}
+
+/* ── ShimmerButton ─────────────────────────────────────────── */
+.shimmer-button__spin {
+  z-index: 0;
+  border-radius: inherit;
+  background: conic-gradient(from 0deg,
+      transparent 0 340deg,
+      var(--shimmer-color) 360deg);
+  animation: shimmer-spin var(--shimmer-speed) linear infinite;
+}
+
+@keyframes shimmer-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── AnimatedShinyText ─────────────────────────────────────── */
+.animated-shiny-text {
+  background-size: 300% 100%;
+  background-image: linear-gradient(120deg,
+      currentColor 0%,
+      currentColor 40%,
+      color-mix(in srgb, var(--color-primary) 80%, white) 50%,
+      currentColor 60%,
+      currentColor 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shiny-sweep var(--shiny-speed, 3s) ease-in-out infinite;
+}
+
+@keyframes shiny-sweep {
+  0% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: -100% 50%;
+  }
+}
+
+/* ── Pulse ─────────────────────────────────────────────────── */
+.magic-pulse__ring {
+  animation: magic-pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  border: 2px solid var(--pulse-color, currentColor);
+}
+
+@keyframes magic-pulse-ring {
+
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.4;
+    transform: scale(1.35);
+  }
+}
+
+/* ── Print styles ──────────────────────────────────────────── */
+@media print {
+  body {
+    background: white !important;
+  }
+
+  .drawer-side,
+  .navbar,
+  .print\:hidden,
+  [aria-hidden="true"] {
+    display: none !important;
+  }
+
+  .drawer-content {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .report-sheet {
+    border: none !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    width: 100% !important;
+    min-height: auto !important;
+  }
+}
