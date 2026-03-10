@@ -1,16 +1,20 @@
 ﻿import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { getPool, sql } from "./db.js";
 
 dotenv.config();
+
+const JWT_SECRET = process.env.JWT_SECRET || "fallback_secret_for_development_only_12345";
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
 
 function parseCorsOrigins(value) {
   if (!value) {
-    return ["http://localhost:5173", "http://localhost:5174"];
+    return ["http://localhost:5173", "http://localhost:5174", "*"];
   }
 
   const origins = value
@@ -18,7 +22,7 @@ function parseCorsOrigins(value) {
     .map((origin) => origin.trim())
     .filter(Boolean);
 
-  return origins.length > 0 ? origins : ["http://localhost:5173", "http://localhost:5174"];
+  return origins.length > 0 ? origins : ["http://localhost:5173", "http://localhost:5174", "*"];
 }
 
 const allowedOrigins = parseCorsOrigins(process.env.CORS_ORIGIN);
@@ -34,7 +38,7 @@ app.use(
     },
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
 function toNullableString(value) {
   if (value === undefined || value === null) return null;
@@ -107,6 +111,40 @@ function sqlErrorResponse(error, res) {
   return res.status(500).json({ error: "Internal server error." });
 }
 
+/**
+ * Logs an action to the audit_logs table.
+ * Fails silently so main transactions still succeed even if audit fails.
+ */
+async function logAuditAction(
+  pool,
+  action,
+  entityType,
+  entityId = null,
+  userId = null,
+  username = null,
+  oldValues = null,
+  newValues = null,
+  ipAddress = null
+) {
+  try {
+    await pool.request()
+      .input("user_id", sql.Int, userId)
+      .input("username", sql.NVarChar, username)
+      .input("action", sql.NVarChar, action)
+      .input("entity_type", sql.NVarChar, entityType)
+      .input("entity_id", sql.Int, entityId)
+      .input("old_values", sql.NVarChar, oldValues ? JSON.stringify(oldValues) : null)
+      .input("new_values", sql.NVarChar, newValues ? JSON.stringify(newValues) : null)
+      .input("ip_address", sql.NVarChar, ipAddress)
+      .query(
+        `INSERT INTO audit_logs (user_id, username, action, entity_type, entity_id, old_values, new_values, ip_address)
+         VALUES (@user_id, @username, @action, @entity_type, @entity_id, @old_values, @new_values, @ip_address)`
+      );
+  } catch (err) {
+    console.error(`Failed to log audit action (${action} on ${entityType}):`, err);
+  }
+}
+
 // ── Health ───────────────────────────────────────────────────────────────────
 
 app.get("/health", async (_req, res) => {
@@ -119,9 +157,240 @@ app.get("/health", async (_req, res) => {
   }
 });
 
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+app.post("/api/login", async (req, res) => {
+  const username = toNullableString(req.body?.username);
+  const password = toNullableString(req.body?.password);
+
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username and password are required." });
+  }
+
+  try {
+    const pool = await getPool();
+    const result = await pool.request()
+      .input("username", sql.NVarChar, username)
+      .query("SELECT id, username, password_hash, role FROM users WHERE username = @username");
+
+    const user = result.recordset[0];
+    if (!user) {
+      return res.status(401).json({ error: "Invalid username or password." });
+    }
+
+    const isValid = await bcrypt.compare(password, user.password_hash);
+    if (!isValid) {
+      return res.status(401).json({ error: "Invalid username or password." });
+    }
+
+    // Generate JWT
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: "12h" }
+    );
+
+    await logAuditAction(
+      pool,
+      "LOGIN",
+      "Auth",
+      user.id,
+      user.id,
+      user.username,
+      null,
+      null,
+      req.ip
+    );
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    sqlErrorResponse(error, res);
+  }
+});
+
+// Auth Middleware for protecting future routes
+function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const token = authHeader.split(" ")[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+
+// Admin Middleware for protecting sensitive routes
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Admin access required." });
+  }
+  next();
+}
+
+// ── Users (Admin Only) ───────────────────────────────────────────────────────
+
+app.get("/api/users", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query(
+      "SELECT id, username, role, email, created_at, updated_at FROM users ORDER BY created_at DESC",
+    );
+    res.json(result.recordset);
+  } catch (error) {
+    sqlErrorResponse(error, res);
+  }
+});
+
+app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
+  const username = toNullableString(req.body?.username);
+  const password = toNullableString(req.body?.password);
+  const role = toNullableString(req.body?.role) || "user";
+  const email = toNullableString(req.body?.email);
+
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username and password are required." });
+  }
+
+  try {
+    const password_hash = await bcrypt.hash(password, 10);
+    const pool = await getPool();
+    const result = await pool.request()
+      .input("username", sql.NVarChar, username)
+      .input("password_hash", sql.NVarChar, password_hash)
+      .input("role", sql.NVarChar, role)
+      .input("email", sql.NVarChar, email)
+      .query(
+        `INSERT INTO users (username, password_hash, role, email)
+         VALUES (@username, @password_hash, @role, @email);
+         SELECT id, username, role, email, created_at, updated_at FROM users WHERE id = SCOPE_IDENTITY()`,
+      );
+    const createdUser = result.recordset[0];
+    await logAuditAction(pool, "CREATE", "User", createdUser.id, req.user.id, req.user.username, null, req.body, req.ip);
+    res.status(201).json(createdUser);
+  } catch (error) {
+    const msg = error.message || "";
+    if (msg.includes("UQ_users_email_filtered")) {
+      return res.status(409).json({ error: "Email already exists." });
+    }
+    if (msg.includes("Violation of UNIQUE KEY constraint") || msg.includes("Cannot insert duplicate key row")) {
+      return res.status(409).json({ error: "Username already exists." });
+    }
+    sqlErrorResponse(error, res);
+  }
+});
+
+app.put("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  const id = toPositiveInt(req.params.id);
+  const username = toNullableString(req.body?.username);
+  const role = toNullableString(req.body?.role);
+  const email = toNullableString(req.body?.email);
+  const newPassword = toNullableString(req.body?.password); // Optional update
+
+  if (!id) return res.status(400).json({ error: "Invalid id." });
+  if (!username || !role) return res.status(400).json({ error: "Username and role are required." });
+
+  // Prevent users from changing their own role to downgrade
+  if (req.user.id === id && role !== "admin") {
+    return res.status(400).json({ error: "You cannot drop your own admin privileges." });
+  }
+
+  try {
+    const pool = await getPool();
+
+    const oldUserRow = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT id, username, role, email FROM users WHERE id = @id");
+    const oldUser = oldUserRow.recordset[0];
+
+    let queryBase = "UPDATE users SET username = @username, role = @role, email = @email";
+
+    const request = pool.request()
+      .input("id", sql.Int, id)
+      .input("username", sql.NVarChar, username)
+      .input("role", sql.NVarChar, role)
+      .input("email", sql.NVarChar, email);
+
+    if (newPassword) {
+      const password_hash = await bcrypt.hash(newPassword, 10);
+      queryBase += ", password_hash = @password_hash";
+      request.input("password_hash", sql.NVarChar, password_hash);
+    }
+
+    queryBase += " WHERE id = @id";
+
+    const result = await request.query(queryBase);
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: "Not found." });
+
+    const rows = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT id, username, role, email, created_at, updated_at FROM users WHERE id = @id");
+    const updatedUser = rows.recordset[0];
+    await logAuditAction(pool, "UPDATE", "User", id, req.user.id, req.user.username, oldUser, req.body, req.ip);
+    res.json(updatedUser);
+  } catch (error) {
+    const msg = error.message || "";
+    if (msg.includes("UQ_users_email_filtered")) {
+      return res.status(409).json({ error: "Email already exists." });
+    }
+    if (msg.includes("Violation of UNIQUE KEY constraint") || msg.includes("Cannot insert duplicate key row")) {
+      return res.status(409).json({ error: "Username already exists." });
+    }
+    sqlErrorResponse(error, res);
+  }
+});
+
+app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  const id = toPositiveInt(req.params.id);
+  if (!id) return res.status(400).json({ error: "Invalid id." });
+
+  if (req.user.id === id) {
+    return res.status(400).json({ error: "You cannot delete your own account." });
+  }
+
+  try {
+    const pool = await getPool();
+
+    // Protection to make sure we don't delete the last admin
+    const adminCount = await pool.request().query("SELECT COUNT(*) as count FROM users WHERE role = 'admin'");
+    const targetUser = await pool.request().input("id", sql.Int, id).query("SELECT role FROM users WHERE id = @id");
+
+    if (targetUser.recordset.length > 0 &&
+      targetUser.recordset[0].role === 'admin' &&
+      adminCount.recordset[0].count <= 1) {
+      return res.status(400).json({ error: "Cannot delete the last admin account." });
+    }
+
+    const oldUser = targetUser.recordset.length > 0 ? targetUser.recordset[0] : null;
+
+    const result = await pool.request()
+      .input("id", sql.Int, id)
+      .query("DELETE FROM users WHERE id = @id");
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: "Not found." });
+
+    await logAuditAction(pool, "DELETE", "User", id, req.user.id, req.user.username, oldUser, null, req.ip);
+    res.status(204).send();
+  } catch (error) {
+    sqlErrorResponse(error, res);
+  }
+});
+
+
 // ── Municipalities ───────────────────────────────────────────────────────────
 
-app.get("/api/municipalities", async (_req, res) => {
+app.get("/api/municipalities", requireAuth, async (_req, res) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(
@@ -133,7 +402,7 @@ app.get("/api/municipalities", async (_req, res) => {
   }
 });
 
-app.post("/api/municipalities", async (req, res) => {
+app.post("/api/municipalities", requireAuth, async (req, res) => {
   const name = toNullableString(req.body?.name);
   if (!name) return res.status(400).json({ error: "Name is required." });
 
@@ -145,13 +414,15 @@ app.post("/api/municipalities", async (req, res) => {
         `INSERT INTO municipalities (name) VALUES (@name);
          SELECT * FROM municipalities WHERE id = SCOPE_IDENTITY()`,
       );
-    res.status(201).json(result.recordset[0]);
+    const createdMuni = result.recordset[0];
+    await logAuditAction(pool, "CREATE", "Municipality", createdMuni.id, req.user.id, req.user.username, null, req.body, req.ip);
+    res.status(201).json(createdMuni);
   } catch (error) {
     sqlErrorResponse(error, res);
   }
 });
 
-app.put("/api/municipalities/:id", async (req, res) => {
+app.put("/api/municipalities/:id", requireAuth, async (req, res) => {
   const id = toPositiveInt(req.params.id);
   const name = toNullableString(req.body?.name);
   if (!id) return res.status(400).json({ error: "Invalid id." });
@@ -159,6 +430,12 @@ app.put("/api/municipalities/:id", async (req, res) => {
 
   try {
     const pool = await getPool();
+
+    const oldMuniRow = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM municipalities WHERE id = @id");
+    const oldMuni = oldMuniRow.recordset[0];
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .input("name", sql.NVarChar, name)
@@ -168,13 +445,16 @@ app.put("/api/municipalities/:id", async (req, res) => {
     const rows = await pool.request()
       .input("id", sql.Int, id)
       .query("SELECT id, name FROM municipalities WHERE id = @id");
-    res.json(rows.recordset[0]);
+
+    const updatedMuni = rows.recordset[0];
+    await logAuditAction(pool, "UPDATE", "Municipality", id, req.user.id, req.user.username, oldMuni, req.body, req.ip);
+    res.json(updatedMuni);
   } catch (error) {
     sqlErrorResponse(error, res);
   }
 });
 
-app.delete("/api/municipalities/:id", async (req, res) => {
+app.delete("/api/municipalities/:id", requireAuth, requireAdmin, async (req, res) => {
   const id = toPositiveInt(req.params.id);
   if (!id) return res.status(400).json({ error: "Invalid id." });
 
@@ -193,10 +473,17 @@ app.delete("/api/municipalities/:id", async (req, res) => {
       });
     }
 
+    const targetMuni = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM municipalities WHERE id = @id");
+    const oldMuni = targetMuni.recordset.length > 0 ? targetMuni.recordset[0] : null;
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .query("DELETE FROM municipalities WHERE id = @id");
     if (result.rowsAffected[0] === 0) return res.status(404).json({ error: "Not found." });
+
+    await logAuditAction(pool, "DELETE", "Municipality", id, req.user.id, req.user.username, oldMuni, null, req.ip);
     res.status(204).send();
   } catch (error) {
     sqlErrorResponse(error, res);
@@ -205,7 +492,7 @@ app.delete("/api/municipalities/:id", async (req, res) => {
 
 // ── Suppliers ────────────────────────────────────────────────────────────────
 
-app.get("/api/suppliers", async (_req, res) => {
+app.get("/api/suppliers", requireAuth, async (_req, res) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(
@@ -217,7 +504,7 @@ app.get("/api/suppliers", async (_req, res) => {
   }
 });
 
-app.post("/api/suppliers", async (req, res) => {
+app.post("/api/suppliers", requireAuth, async (req, res) => {
   const name = toNullableString(req.body?.name);
   if (!name) return res.status(400).json({ error: "Name is required." });
 
@@ -237,13 +524,15 @@ app.post("/api/suppliers", async (req, res) => {
          VALUES (@name, @contact_person, @phone_number, @address);
          SELECT * FROM suppliers WHERE id = SCOPE_IDENTITY()`,
       );
-    res.status(201).json(result.recordset[0]);
+    const createdSupplier = result.recordset[0];
+    await logAuditAction(pool, "CREATE", "Supplier", createdSupplier.id, req.user.id, req.user.username, null, req.body, req.ip);
+    res.status(201).json(createdSupplier);
   } catch (error) {
     sqlErrorResponse(error, res);
   }
 });
 
-app.put("/api/suppliers/:id", async (req, res) => {
+app.put("/api/suppliers/:id", requireAuth, async (req, res) => {
   const id = toPositiveInt(req.params.id);
   const name = toNullableString(req.body?.name);
   if (!id) return res.status(400).json({ error: "Invalid id." });
@@ -255,6 +544,12 @@ app.put("/api/suppliers/:id", async (req, res) => {
 
   try {
     const pool = await getPool();
+
+    const oldSupplierRow = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM suppliers WHERE id = @id");
+    const oldSupplier = oldSupplierRow.recordset[0];
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .input("name", sql.NVarChar, name)
@@ -271,22 +566,33 @@ app.put("/api/suppliers/:id", async (req, res) => {
     const rows = await pool.request()
       .input("id", sql.Int, id)
       .query("SELECT id, name, contact_person, phone_number, address FROM suppliers WHERE id = @id");
-    res.json(rows.recordset[0]);
+
+    const updatedSupplier = rows.recordset[0];
+    await logAuditAction(pool, "UPDATE", "Supplier", id, req.user.id, req.user.username, oldSupplier, req.body, req.ip);
+    res.json(updatedSupplier);
   } catch (error) {
     sqlErrorResponse(error, res);
   }
 });
 
-app.delete("/api/suppliers/:id", async (req, res) => {
+app.delete("/api/suppliers/:id", requireAuth, requireAdmin, async (req, res) => {
   const id = toPositiveInt(req.params.id);
   if (!id) return res.status(400).json({ error: "Invalid id." });
 
   try {
     const pool = await getPool();
+
+    const targetSupplier = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM suppliers WHERE id = @id");
+    const oldSupplier = targetSupplier.recordset.length > 0 ? targetSupplier.recordset[0] : null;
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .query("DELETE FROM suppliers WHERE id = @id");
     if (result.rowsAffected[0] === 0) return res.status(404).json({ error: "Not found." });
+
+    await logAuditAction(pool, "DELETE", "Supplier", id, req.user.id, req.user.username, oldSupplier, null, req.ip);
     res.status(204).send();
   } catch (error) {
     sqlErrorResponse(error, res);
@@ -295,11 +601,11 @@ app.delete("/api/suppliers/:id", async (req, res) => {
 
 // ── Products ─────────────────────────────────────────────────────────────────
 
-app.get("/api/products", async (_req, res) => {
+app.get("/api/products", requireAuth, async (_req, res) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(
-      `SELECT id, name, municipality_id, supplier_id, unit_price, is_consignment, remarks, created_at
+      `SELECT id, name, municipality_id, supplier_id, unit_price, is_consignment, remarks, image, created_at
        FROM products
        ORDER BY created_at DESC`,
     );
@@ -309,7 +615,7 @@ app.get("/api/products", async (_req, res) => {
   }
 });
 
-app.post("/api/products", async (req, res) => {
+app.post("/api/products", requireAuth, async (req, res) => {
   const name = toNullableString(req.body?.name);
   if (!name) return res.status(400).json({ error: "Name is required." });
 
@@ -318,6 +624,7 @@ app.post("/api/products", async (req, res) => {
   const unit_price = toMoney(req.body?.unit_price ?? 0);
   const is_consignment = req.body?.is_consignment ? 1 : 0;
   const remarks = toNullableString(req.body?.remarks);
+  const image = toNullableString(req.body?.image);
 
   if (unit_price === null) {
     return res.status(400).json({ error: "Unit price must be non-negative." });
@@ -332,18 +639,21 @@ app.post("/api/products", async (req, res) => {
       .input("unit_price", sql.Decimal(18, 2), unit_price)
       .input("is_consignment", sql.Bit, is_consignment)
       .input("remarks", sql.NVarChar, remarks)
+      .input("image", sql.NVarChar(sql.MAX), image)
       .query(
-        `INSERT INTO products (name, municipality_id, supplier_id, unit_price, is_consignment, remarks)
-         VALUES (@name, @municipality_id, @supplier_id, @unit_price, @is_consignment, @remarks);
+        `INSERT INTO products (name, municipality_id, supplier_id, unit_price, is_consignment, remarks, image)
+         VALUES (@name, @municipality_id, @supplier_id, @unit_price, @is_consignment, @remarks, @image);
          SELECT * FROM products WHERE id = SCOPE_IDENTITY()`,
       );
-    res.status(201).json(result.recordset[0]);
+    const createdProduct = result.recordset[0];
+    await logAuditAction(pool, "CREATE", "Product", createdProduct.id, req.user.id, req.user.username, null, req.body, req.ip);
+    res.status(201).json(createdProduct);
   } catch (error) {
     sqlErrorResponse(error, res);
   }
 });
 
-app.put("/api/products/:id", async (req, res) => {
+app.put("/api/products/:id", requireAuth, async (req, res) => {
   const id = toPositiveInt(req.params.id);
   const name = toNullableString(req.body?.name);
   if (!id) return res.status(400).json({ error: "Invalid id." });
@@ -354,6 +664,7 @@ app.put("/api/products/:id", async (req, res) => {
   const unit_price = toMoney(req.body?.unit_price ?? 0);
   const is_consignment = req.body?.is_consignment ? 1 : 0;
   const remarks = toNullableString(req.body?.remarks);
+  const image = toNullableString(req.body?.image);
 
   if (unit_price === null) {
     return res.status(400).json({ error: "Unit price must be non-negative." });
@@ -369,27 +680,30 @@ app.put("/api/products/:id", async (req, res) => {
       .input("unit_price", sql.Decimal(18, 2), unit_price)
       .input("is_consignment", sql.Bit, is_consignment)
       .input("remarks", sql.NVarChar, remarks)
+      .input("image", sql.NVarChar(sql.MAX), image)
       .query(
         `UPDATE products
          SET name = @name, municipality_id = @municipality_id, supplier_id = @supplier_id,
-             unit_price = @unit_price, is_consignment = @is_consignment, remarks = @remarks
+             unit_price = @unit_price, is_consignment = @is_consignment, remarks = @remarks,
+             image = @image
          WHERE id = @id`,
       );
     if (result.rowsAffected[0] === 0) return res.status(404).json({ error: "Not found." });
 
     const rows = await pool.request()
       .input("id", sql.Int, id)
-      .query(
-        `SELECT id, name, municipality_id, supplier_id, unit_price, is_consignment, remarks, created_at
-         FROM products WHERE id = @id`,
-      );
-    res.json(rows.recordset[0]);
+      .query(`SELECT id, name, municipality_id, supplier_id, unit_price, is_consignment, remarks, image, created_at
+             FROM products WHERE id = @id`);
+
+    const updatedProduct = rows.recordset[0];
+    await logAuditAction(pool, "UPDATE", "Product", id, req.user.id, req.user.username, oldProduct, req.body, req.ip);
+    res.json(updatedProduct);
   } catch (error) {
     sqlErrorResponse(error, res);
   }
 });
 
-app.delete("/api/products/:id", async (req, res) => {
+app.delete("/api/products/:id", requireAuth, requireAdmin, async (req, res) => {
   const id = toPositiveInt(req.params.id);
   if (!id) return res.status(400).json({ error: "Invalid id." });
 
@@ -416,10 +730,17 @@ app.delete("/api/products/:id", async (req, res) => {
       });
     }
 
+    const targetProduct = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM products WHERE id = @id");
+    const oldProduct = targetProduct.recordset.length > 0 ? targetProduct.recordset[0] : null;
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .query("DELETE FROM products WHERE id = @id");
     if (result.rowsAffected[0] === 0) return res.status(404).json({ error: "Not found." });
+
+    await logAuditAction(pool, "DELETE", "Product", id, req.user.id, req.user.username, oldProduct, null, req.ip);
     res.status(204).send();
   } catch (error) {
     sqlErrorResponse(error, res);
@@ -428,7 +749,7 @@ app.delete("/api/products/:id", async (req, res) => {
 
 // ── Sales ────────────────────────────────────────────────────────────────────
 
-app.get("/api/sales", async (_req, res) => {
+app.get("/api/sales", requireAuth, async (_req, res) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(
@@ -442,7 +763,7 @@ app.get("/api/sales", async (_req, res) => {
   }
 });
 
-app.post("/api/sales", async (req, res) => {
+app.post("/api/sales", requireAuth, async (req, res) => {
   const product_id = toPositiveInt(req.body?.product_id);
   const quantity = toPositiveInt(req.body?.quantity);
   const unit_price = toMoney(req.body?.unit_price);
@@ -467,13 +788,15 @@ app.post("/api/sales", async (req, res) => {
          VALUES (@product_id, @quantity, @unit_price, @sale_date);
          SELECT * FROM sales WHERE id = SCOPE_IDENTITY()`,
       );
-    res.status(201).json(result.recordset[0]);
+    const createdSale = result.recordset[0];
+    await logAuditAction(pool, "CREATE", "Sale", createdSale.id, req.user.id, req.user.username, null, req.body, req.ip);
+    res.status(201).json(createdSale);
   } catch (error) {
     sqlErrorResponse(error, res);
   }
 });
 
-app.put("/api/sales/:id", async (req, res) => {
+app.put("/api/sales/:id", requireAuth, async (req, res) => {
   const id = toPositiveInt(req.params.id);
   const product_id = toPositiveInt(req.body?.product_id);
   const quantity = toPositiveInt(req.body?.quantity);
@@ -490,6 +813,12 @@ app.put("/api/sales/:id", async (req, res) => {
 
   try {
     const pool = await getPool();
+
+    const oldSaleRow = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM sales WHERE id = @id");
+    const oldSale = oldSaleRow.recordset[0];
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .input("product_id", sql.Int, product_id)
@@ -510,22 +839,33 @@ app.put("/api/sales/:id", async (req, res) => {
         `SELECT id, product_id, quantity, unit_price, total_amount, sale_date
          FROM sales WHERE id = @id`,
       );
-    res.json(rows.recordset[0]);
+
+    const updatedSale = rows.recordset[0];
+    await logAuditAction(pool, "UPDATE", "Sale", id, req.user.id, req.user.username, oldSale, req.body, req.ip);
+    res.json(updatedSale);
   } catch (error) {
     sqlErrorResponse(error, res);
   }
 });
 
-app.delete("/api/sales/:id", async (req, res) => {
+app.delete("/api/sales/:id", requireAuth, requireAdmin, async (req, res) => {
   const id = toPositiveInt(req.params.id);
   if (!id) return res.status(400).json({ error: "Invalid id." });
 
   try {
     const pool = await getPool();
+
+    const targetSale = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM sales WHERE id = @id");
+    const oldSale = targetSale.recordset.length > 0 ? targetSale.recordset[0] : null;
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .query("DELETE FROM sales WHERE id = @id");
     if (result.rowsAffected[0] === 0) return res.status(404).json({ error: "Not found." });
+
+    await logAuditAction(pool, "DELETE", "Sale", id, req.user.id, req.user.username, oldSale, null, req.ip);
     res.status(204).send();
   } catch (error) {
     sqlErrorResponse(error, res);
@@ -534,7 +874,7 @@ app.delete("/api/sales/:id", async (req, res) => {
 
 // ── Stock Movements ──────────────────────────────────────────────────────────
 
-app.get("/api/stock-movements", async (_req, res) => {
+app.get("/api/stock-movements", requireAuth, async (_req, res) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(
@@ -548,7 +888,7 @@ app.get("/api/stock-movements", async (_req, res) => {
   }
 });
 
-app.post("/api/stock-movements", async (req, res) => {
+app.post("/api/stock-movements", requireAuth, async (req, res) => {
   const product_id = toPositiveInt(req.body?.product_id);
   const movement_type = toNullableString(req.body?.movement_type);
   const quantity = toPositiveInt(req.body?.quantity);
@@ -583,13 +923,15 @@ app.post("/api/stock-movements", async (req, res) => {
          VALUES (@product_id, @movement_type, @quantity, @payment_status, @movement_date, @remarks);
          SELECT * FROM stock_movements WHERE id = SCOPE_IDENTITY()`,
       );
-    res.status(201).json(result.recordset[0]);
+    const createdMovement = result.recordset[0];
+    await logAuditAction(pool, "CREATE", "StockMovement", createdMovement.id, req.user.id, req.user.username, null, req.body, req.ip);
+    res.status(201).json(createdMovement);
   } catch (error) {
     sqlErrorResponse(error, res);
   }
 });
 
-app.put("/api/stock-movements/:id", async (req, res) => {
+app.put("/api/stock-movements/:id", requireAuth, async (req, res) => {
   const id = toPositiveInt(req.params.id);
   const product_id = toPositiveInt(req.body?.product_id);
   const movement_type = toNullableString(req.body?.movement_type);
@@ -614,6 +956,12 @@ app.put("/api/stock-movements/:id", async (req, res) => {
 
   try {
     const pool = await getPool();
+
+    const oldMovementRow = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM stock_movements WHERE id = @id");
+    const oldMovement = oldMovementRow.recordset[0];
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .input("product_id", sql.Int, product_id)
@@ -637,22 +985,33 @@ app.put("/api/stock-movements/:id", async (req, res) => {
         `SELECT id, product_id, movement_type, quantity, payment_status, movement_date, remarks
          FROM stock_movements WHERE id = @id`,
       );
-    res.json(rows.recordset[0]);
+
+    const updatedMovement = rows.recordset[0];
+    await logAuditAction(pool, "UPDATE", "StockMovement", id, req.user.id, req.user.username, oldMovement, req.body, req.ip);
+    res.json(updatedMovement);
   } catch (error) {
     sqlErrorResponse(error, res);
   }
 });
 
-app.delete("/api/stock-movements/:id", async (req, res) => {
+app.delete("/api/stock-movements/:id", requireAuth, requireAdmin, async (req, res) => {
   const id = toPositiveInt(req.params.id);
   if (!id) return res.status(400).json({ error: "Invalid id." });
 
   try {
     const pool = await getPool();
+
+    const targetMovement = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM stock_movements WHERE id = @id");
+    const oldMovement = targetMovement.recordset.length > 0 ? targetMovement.recordset[0] : null;
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .query("DELETE FROM stock_movements WHERE id = @id");
     if (result.rowsAffected[0] === 0) return res.status(404).json({ error: "Not found." });
+
+    await logAuditAction(pool, "DELETE", "StockMovement", id, req.user.id, req.user.username, oldMovement, null, req.ip);
     res.status(204).send();
   } catch (error) {
     sqlErrorResponse(error, res);
@@ -661,7 +1020,7 @@ app.delete("/api/stock-movements/:id", async (req, res) => {
 
 // ── Inventory ────────────────────────────────────────────────────────────────
 
-app.get("/api/inventory", async (_req, res) => {
+app.get("/api/inventory", requireAuth, async (_req, res) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(
@@ -678,7 +1037,7 @@ app.get("/api/inventory", async (_req, res) => {
 
 // ── Reports ──────────────────────────────────────────────────────────────────
 
-app.get("/api/reports/inventory", async (_req, res) => {
+app.get("/api/reports/inventory", requireAuth, async (_req, res) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(
@@ -694,6 +1053,6 @@ app.get("/api/reports/inventory", async (_req, res) => {
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
-app.listen(port, () => {
-  console.log(`Backend running on http://localhost:${port}`);
+app.listen(port, "0.0.0.0", () => {
+  console.log(`Backend running on http://0.0.0.0:${port}`);
 });

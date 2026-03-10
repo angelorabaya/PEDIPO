@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const BREAKPOINT_SM_PX = 640;
 const BREAKPOINT_LG_PX = 1024;
@@ -32,12 +32,16 @@ function ProductsPage({
   onCreateProduct,
   onUpdateProduct,
   onDeleteProduct,
+  isAdmin,
 }) {
   const modalRef = useRef(null);
+  const imagePreviewRef = useRef(null);
   const tableWrapperRef = useRef(null);
   const tableHeadRef = useRef(null);
   const paginationRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
@@ -49,6 +53,7 @@ function ProductsPage({
     unit_price: "0.00",
     is_consignment: false,
     remarks: "",
+    image: null,
   });
 
   const municipalityMap = useMemo(
@@ -153,6 +158,27 @@ function ProductsPage({
   const start = (currentPage - 1) * rowsPerPage;
   const pagedProducts = filteredProducts.slice(start, start + rowsPerPage);
 
+  const handleImageChange = useCallback((event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      setFeedback({ type: "error", text: "Image must be smaller than 5 MB." });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setDraft((current) => ({ ...current, image: e.target.result }));
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const removeImage = useCallback(() => {
+    setDraft((current) => ({ ...current, image: null }));
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, []);
+
   const openCreateModal = () => {
     setEditingId(null);
     setDraft({
@@ -162,7 +188,9 @@ function ProductsPage({
       unit_price: "0.00",
       is_consignment: false,
       remarks: "",
+      image: null,
     });
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setFeedback(null);
     modalRef.current?.showModal();
   };
@@ -177,7 +205,9 @@ function ProductsPage({
       unit_price: Number(product.unit_price).toFixed(2),
       is_consignment: Boolean(product.is_consignment),
       remarks: product.remarks ?? "",
+      image: product.image ?? null,
     });
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setFeedback(null);
     modalRef.current?.showModal();
   };
@@ -192,7 +222,9 @@ function ProductsPage({
       unit_price: "0.00",
       is_consignment: false,
       remarks: "",
+      image: null,
     });
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleSave = async (event) => {
@@ -213,6 +245,21 @@ function ProductsPage({
       return;
     }
 
+    const municipalityId = draft.municipality_id ? Number(draft.municipality_id) : null;
+    const isDuplicate = products.some(
+      (item) =>
+        item.id !== editingId &&
+        item.name.toLowerCase() === name.toLowerCase() &&
+        (item.municipality_id ?? null) === municipalityId,
+    );
+    if (isDuplicate) {
+      setFeedback({
+        type: "error",
+        text: "A product with the same name and municipality already exists.",
+      });
+      return;
+    }
+
     const payload = {
       name,
       municipality_id: draft.municipality_id ? Number(draft.municipality_id) : null,
@@ -220,6 +267,7 @@ function ProductsPage({
       unit_price: Number(parsedPrice.toFixed(2)),
       is_consignment: Boolean(draft.is_consignment),
       remarks: draft.remarks.trim(),
+      image: draft.image || null,
     };
 
     try {
@@ -294,9 +342,8 @@ function ProductsPage({
           {feedback ? (
             <div
               role="alert"
-              className={`alert mb-4 ${
-                feedback.type === "error" ? "alert-error" : "alert-success"
-              }`}
+              className={`alert mb-4 ${feedback.type === "error" ? "alert-error" : "alert-success"
+                }`}
             >
               <span>{feedback.text}</span>
             </div>
@@ -314,6 +361,7 @@ function ProductsPage({
               <thead ref={tableHeadRef}>
                 <tr>
                   <th>ID</th>
+                  <th>Image</th>
                   <th>Name</th>
                   <th>Municipality</th>
                   <th>Supplier</th>
@@ -328,15 +376,33 @@ function ProductsPage({
                 {pagedProducts.map((product) => (
                   <tr key={product.id}>
                     <td>{product.id}</td>
+                    <td>
+                      {product.image ? (
+                        <img
+                          src={product.image}
+                          alt={product.name}
+                          className="h-10 w-10 cursor-pointer rounded object-cover transition-opacity hover:opacity-75"
+                          onClick={() => {
+                            setPreviewImage({ src: product.image, name: product.name });
+                            imagePreviewRef.current?.showModal();
+                          }}
+                        />
+                      ) : (
+                        <span className="inline-flex h-10 w-10 items-center justify-center rounded bg-base-200 text-base-content/40">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="size-5">
+                            <path d="M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-5z" />
+                          </svg>
+                        </span>
+                      )}
+                    </td>
                     <td>{product.name}</td>
                     <td>{municipalityMap.get(product.municipality_id) ?? "-"}</td>
                     <td>{supplierMap.get(product.supplier_id) ?? "-"}</td>
                     <td>{Number(product.unit_price).toFixed(2)}</td>
                     <td>
                       <span
-                        className={`badge rounded-full ${
-                          product.is_consignment ? "badge-success" : "badge-neutral"
-                        }`}
+                        className={`badge rounded-full ${product.is_consignment ? "badge-success" : "badge-neutral"
+                          }`}
                       >
                         {product.is_consignment ? "Consignment" : "Regular"}
                       </span>
@@ -361,29 +427,31 @@ function ProductsPage({
                             <path d="M3 17.25V21h3.75l11.02-11.02-3.75-3.75L3 17.25zm17.71-10.04a1.003 1.003 0 000-1.42l-2.5-2.5a1.003 1.003 0 00-1.42 0l-1.96 1.96 3.75 3.75 2.13-1.79z" />
                           </svg>
                         </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline btn-error btn-square"
-                          aria-label={`Delete ${product.name}`}
-                          title="Delete"
-                          onClick={() => handleDeleteProduct(product.id)}
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 24 24"
-                            fill="currentColor"
-                            className="size-4"
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline btn-error btn-square"
+                            aria-label={`Delete ${product.name}`}
+                            title="Delete"
+                            onClick={() => handleDeleteProduct(product.id)}
                           >
-                            <path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z" />
-                          </svg>
-                        </button>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                              className="size-4"
+                            >
+                              <path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z" />
+                            </svg>
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
                 ))}
                 {pagedProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="text-center text-base-content/70">
+                    <td colSpan={10} className="text-center text-base-content/70">
                       No products found.
                     </td>
                   </tr>
@@ -548,6 +616,36 @@ function ProductsPage({
               />
             </label>
 
+            <label className="form-control w-full pt-1">
+              <div className="label">
+                <span className="label-text font-semibold">Product Image</span>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                className="file-input file-input-bordered w-full"
+                onChange={handleImageChange}
+              />
+            </label>
+
+            {draft.image ? (
+              <div className="mt-2 flex items-start gap-3">
+                <img
+                  src={draft.image}
+                  alt="Preview"
+                  className="h-24 w-24 rounded border border-base-300 object-cover"
+                />
+                <button
+                  type="button"
+                  className="btn btn-xs btn-error btn-outline"
+                  onClick={removeImage}
+                >
+                  Remove
+                </button>
+              </div>
+            ) : null}
+
             <div className="modal-action">
               <button type="button" className="btn btn-ghost" onClick={closeModal}>
                 Cancel
@@ -557,6 +655,29 @@ function ProductsPage({
               </button>
             </div>
           </form>
+        </div>
+        <form method="dialog" className="modal-backdrop">
+          <button type="submit">close</button>
+        </form>
+      </dialog>
+
+      <dialog ref={imagePreviewRef} className="modal">
+        <div className="modal-box max-w-2xl p-4">
+          {previewImage ? (
+            <>
+              <h3 className="mb-3 text-lg font-bold">{previewImage.name}</h3>
+              <img
+                src={previewImage.src}
+                alt={previewImage.name}
+                className="w-full rounded object-contain"
+              />
+            </>
+          ) : null}
+          <div className="modal-action">
+            <form method="dialog">
+              <button type="submit" className="btn btn-ghost">Close</button>
+            </form>
+          </div>
         </div>
         <form method="dialog" className="modal-backdrop">
           <button type="submit">close</button>

@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { motion } from "framer-motion";
 import NumberTicker from "../../components/magic/NumberTicker";
 import MagicCard from "../../components/magic/MagicCard";
-import ShimmerButton from "../../components/magic/ShimmerButton";
+
 import Pulse from "../../components/magic/Pulse";
 
 const stagger = {
@@ -209,54 +209,42 @@ function DashboardPage({
             <div className="divider my-2" />
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <ShimmerButton
-                background="oklch(var(--p))"
-                shimmerColor="rgba(255,255,255,0.6)"
-                borderRadius="var(--rounded-btn, 0.5rem)"
+              <button
+                className="btn btn-primary"
                 onClick={() => onNavigate("municipalities")}
               >
                 Manage Municipalities
-              </ShimmerButton>
-              <ShimmerButton
-                background="oklch(var(--p))"
-                shimmerColor="rgba(255,255,255,0.6)"
-                borderRadius="var(--rounded-btn, 0.5rem)"
+              </button>
+              <button
+                className="btn btn-primary"
                 onClick={() => onNavigate("suppliers")}
               >
                 Manage Suppliers
-              </ShimmerButton>
-              <ShimmerButton
-                background="oklch(var(--p))"
-                shimmerColor="rgba(255,255,255,0.6)"
-                borderRadius="var(--rounded-btn, 0.5rem)"
+              </button>
+              <button
+                className="btn btn-primary"
                 onClick={() => onNavigate("products")}
               >
                 Manage Products
-              </ShimmerButton>
-              <ShimmerButton
-                background="oklch(var(--s))"
-                shimmerColor="rgba(255,255,255,0.5)"
-                borderRadius="var(--rounded-btn, 0.5rem)"
+              </button>
+              <button
+                className="btn btn-secondary"
                 onClick={() => onNavigate("inventory")}
               >
                 Open Inventory
-              </ShimmerButton>
-              <ShimmerButton
-                background="oklch(var(--s))"
-                shimmerColor="rgba(255,255,255,0.5)"
-                borderRadius="var(--rounded-btn, 0.5rem)"
+              </button>
+              <button
+                className="btn btn-secondary"
                 onClick={() => onNavigate("sales")}
               >
                 Record Sales
-              </ShimmerButton>
-              <ShimmerButton
-                background="oklch(var(--s))"
-                shimmerColor="rgba(255,255,255,0.5)"
-                borderRadius="var(--rounded-btn, 0.5rem)"
+              </button>
+              <button
+                className="btn btn-secondary"
                 onClick={() => onNavigate("stock-movements")}
               >
                 Record Stock Movement
-              </ShimmerButton>
+              </button>
             </div>
           </div>
         </MagicCard>
@@ -406,10 +394,10 @@ function DashboardPage({
                       <td>
                         <span
                           className={`badge rounded-full ${item.quantity < 0
-                              ? "badge-error"
-                              : item.quantity === 0
-                                ? "badge-warning"
-                                : "badge-info"
+                            ? "badge-error"
+                            : item.quantity === 0
+                              ? "badge-warning"
+                              : "badge-info"
                             }`}
                         >
                           {item.quantity < 0

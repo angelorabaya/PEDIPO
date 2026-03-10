@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:4000`;
 
 function ProductSummaryPage() {
   const [rows, setRows] = useState([]);
@@ -11,7 +11,10 @@ function ProductSummaryPage() {
     setIsLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API_BASE_URL}/api/reports/inventory`);
+      const token = localStorage.getItem("token");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const res = await fetch(`${API_BASE_URL}/api/reports/inventory`, { headers });
       if (!res.ok) throw new Error(`Failed to load report (${res.status})`);
       const data = await res.json();
       setRows(Array.isArray(data) ? data : []);

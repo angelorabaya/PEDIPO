@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:4000`;
 
 function formatDate(dateStr) {
     return new Date(dateStr).toLocaleDateString("en-PH", {
@@ -32,11 +32,14 @@ function SalesReportPage() {
         setIsLoading(true);
         setError("");
         try {
+            const token = localStorage.getItem("token");
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
             const [salesRes, productsRes, muniRes, suppRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/api/sales`),
-                fetch(`${API_BASE_URL}/api/products`),
-                fetch(`${API_BASE_URL}/api/municipalities`),
-                fetch(`${API_BASE_URL}/api/suppliers`),
+                fetch(`${API_BASE_URL}/api/sales`, { headers }),
+                fetch(`${API_BASE_URL}/api/products`, { headers }),
+                fetch(`${API_BASE_URL}/api/municipalities`, { headers }),
+                fetch(`${API_BASE_URL}/api/suppliers`, { headers }),
             ]);
             if (!salesRes.ok) throw new Error(`Failed to load sales (${salesRes.status})`);
             if (!productsRes.ok) throw new Error(`Failed to load products (${productsRes.status})`);

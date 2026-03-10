@@ -30,6 +30,7 @@ function MunicipalitiesPage({
   onCreateMunicipality,
   onUpdateMunicipality,
   onDeleteMunicipality,
+  isAdmin,
 }) {
   const modalRef = useRef(null);
   const tableWrapperRef = useRef(null);
@@ -243,9 +244,8 @@ function MunicipalitiesPage({
           {feedback ? (
             <div
               role="alert"
-              className={`alert mb-4 ${
-                feedback.type === "error" ? "alert-error" : "alert-success"
-              }`}
+              className={`alert mb-4 ${feedback.type === "error" ? "alert-error" : "alert-success"
+                }`}
             >
               <span>{feedback.text}</span>
             </div>
@@ -290,22 +290,24 @@ function MunicipalitiesPage({
                             <path d="M3 17.25V21h3.75l11.02-11.02-3.75-3.75L3 17.25zm17.71-10.04a1.003 1.003 0 000-1.42l-2.5-2.5a1.003 1.003 0 00-1.42 0l-1.96 1.96 3.75 3.75 2.13-1.79z" />
                           </svg>
                         </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline btn-error btn-square"
-                          aria-label={`Delete ${municipality.name}`}
-                          title="Delete"
-                          onClick={() => handleDeleteMunicipality(municipality.id)}
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 24 24"
-                            fill="currentColor"
-                            className="size-4"
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline btn-error btn-square"
+                            aria-label={`Delete ${municipality.name}`}
+                            title="Delete"
+                            onClick={() => handleDeleteMunicipality(municipality.id)}
                           >
-                            <path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z" />
-                          </svg>
-                        </button>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                              className="size-4"
+                            >
+                              <path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z" />
+                            </svg>
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

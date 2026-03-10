@@ -9,11 +9,13 @@ import MunicipalitiesPage from "./pages/municipalities/MunicipalitiesPage";
 import ProductsPage from "./pages/products/ProductsPage";
 import ProductSummaryPage from "./pages/reports/product-summary/ProductSummaryPage";
 import SalesReportPage from "./pages/reports/sales-report/SalesReportPage";
+import UsersPage from "./pages/users/UsersPage";
 import SalesPage from "./pages/sales/SalesPage";
 import StockMovementsPage from "./pages/stock-movements/StockMovementsPage";
 import SuppliersPage from "./pages/suppliers/SuppliersPage";
+import LoginPage from "./pages/auth/LoginPage";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:4000`;
 
 const VALID_PAGES = new Set([
   "dashboard",
@@ -25,14 +27,21 @@ const VALID_PAGES = new Set([
   "stock-movements",
   "product-summary",
   "sales-report",
+  "users", // <-- Added users page
 ]);
 
 async function apiRequest(path, options = {}) {
+  const token = localStorage.getItem("token");
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+    headers,
     ...options,
   });
 
@@ -44,6 +53,11 @@ async function apiRequest(path, options = {}) {
     : await response.text();
 
   if (!response.ok) {
+    if (response.status === 401) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      window.location.reload();
+    }
     const errorMessage =
       typeof data === "object" && data?.error
         ? data.error
@@ -95,6 +109,9 @@ function App() {
   const [stockMovements, setStockMovements] = useState([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [user, setUser] = useState(null);
+  const [users, setUsers] = useState([]); // List of all users from backend
+  const [isInitializingAuth, setIsInitializingAuth] = useState(true);
 
   const navigateTo = (page, options = {}) => {
     if (!VALID_PAGES.has(page)) return;
@@ -111,13 +128,24 @@ function App() {
     setIsLoadingData(true);
     setLoadError("");
     try {
-      const [m, s, p, saleRows, movements] = await Promise.all([
+      // Base requests for everyone
+      const requests = [
         apiRequest("/api/municipalities"),
         apiRequest("/api/suppliers"),
         apiRequest("/api/products"),
         apiRequest("/api/sales"),
         apiRequest("/api/stock-movements"),
-      ]);
+      ];
+
+      // Admin-only requests
+      const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+      if (currentUser?.role === "admin") {
+        requests.push(apiRequest("/api/users"));
+      } else {
+        requests.push(Promise.resolve(null)); // Placeholder
+      }
+
+      const [m, s, p, saleRows, movements, allUsers] = await Promise.all(requests);
 
       setMunicipalities(Array.isArray(m) ? m : []);
       setSuppliers(Array.isArray(s) ? s : []);
@@ -126,12 +154,36 @@ function App() {
       setStockMovements(
         normalizeStockMovements(Array.isArray(movements) ? movements : []),
       );
+      if (allUsers) {
+        setUsers(Array.isArray(allUsers) ? allUsers : []);
+      }
     } catch (error) {
       setLoadError(error.message || "Failed to load data from backend.");
     } finally {
       setIsLoadingData(false);
     }
   }, []);
+
+  const createUserAccount = async (payload) => {
+    await apiRequest("/api/users", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    await loadAllData();
+  };
+
+  const updateUserAccount = async (id, payload) => {
+    await apiRequest(`/api/users/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    await loadAllData();
+  };
+
+  const deleteUserAccount = async (id) => {
+    await apiRequest(`/api/users/${id}`, { method: "DELETE" });
+    await loadAllData();
+  };
 
   const createMunicipality = async (payload) => {
     await apiRequest("/api/municipalities", {
@@ -263,13 +315,34 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) {
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch (err) {
+        localStorage.removeItem("user");
+        localStorage.removeItem("token");
+      }
+    }
+    setIsInitializingAuth(false);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("dashboard-theme", theme);
   }, [theme]);
 
   useEffect(() => {
-    loadAllData();
-  }, [loadAllData]);
+    if (user) {
+      loadAllData();
+    }
+  }, [loadAllData, user]);
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setUser(null);
+  };
 
   const renderPage = () => {
     if (activePage === "dashboard") {
@@ -292,6 +365,7 @@ function App() {
           onCreateMunicipality={createMunicipality}
           onUpdateMunicipality={updateMunicipality}
           onDeleteMunicipality={deleteMunicipality}
+          isAdmin={user?.role === "admin"}
         />
       );
     }
@@ -303,6 +377,7 @@ function App() {
           onCreateSupplier={createSupplier}
           onUpdateSupplier={updateSupplier}
           onDeleteSupplier={deleteSupplier}
+          isAdmin={user?.role === "admin"}
         />
       );
     }
@@ -316,6 +391,7 @@ function App() {
           onCreateProduct={createProduct}
           onUpdateProduct={updateProduct}
           onDeleteProduct={deleteProduct}
+          isAdmin={user?.role === "admin"}
         />
       );
     }
@@ -340,6 +416,7 @@ function App() {
           onCreateSale={createSale}
           onUpdateSale={updateSale}
           onDeleteSale={deleteSale}
+          isAdmin={user?.role === "admin"}
         />
       );
     }
@@ -352,6 +429,29 @@ function App() {
           onCreateStockMovement={createStockMovement}
           onUpdateStockMovement={updateStockMovement}
           onDeleteStockMovement={deleteStockMovement}
+          isAdmin={user?.role === "admin"}
+        />
+      );
+    }
+
+    if (activePage === "users") {
+      if (user?.role !== "admin") {
+        return (
+          <section className="card border border-error/30 bg-base-100 shadow-sm">
+            <div className="card-body">
+              <h2 className="card-title text-error">Forbidden</h2>
+              <p>You do not have permission to view this page.</p>
+            </div>
+          </section>
+        );
+      }
+      return (
+        <UsersPage
+          users={users}
+          onCreateUser={createUserAccount}
+          onUpdateUser={updateUserAccount}
+          onDeleteUser={deleteUserAccount}
+          currentUserId={user?.id}
         />
       );
     }
@@ -366,6 +466,21 @@ function App() {
 
     return null;
   };
+
+  if (isInitializingAuth) {
+    return <div className="min-h-screen bg-base-200" />;
+  }
+
+  if (!user) {
+    return (
+      <main className="relative min-h-screen overflow-hidden bg-base-200 font-sans text-base-content">
+        <AnimatedGridBackground />
+        <div className="relative z-10">
+          <LoginPage onLoginSuccess={setUser} />
+        </div>
+      </main>
+    );
+  }
 
   const contentKey = isLoadingData ? "loading" : loadError ? "error" : activePage;
 
@@ -419,7 +534,9 @@ function App() {
                                 ? "Inventory Management - Sales"
                                 : activePage === "stock-movements"
                                   ? "Inventory Management - Stock Movements"
-                                  : "Reports - Product Summary"}
+                                  : activePage === "users"
+                                    ? "Master Control - User Administration"
+                                    : "Reports - Product Summary"}
                   </h1>
                 </BlurReveal>
               </div>
@@ -488,132 +605,193 @@ function App() {
 
         <aside className="drawer-side z-20">
           <label htmlFor="app-drawer" className="drawer-overlay" />
-          <div className="h-full w-72 border-r border-base-300 bg-base-100 p-4">
-            <div className="mb-4 px-2">
+          <div className="flex h-full w-72 flex-col gap-2 border-r border-base-300 bg-base-100 p-4">
+            <div className="shrink-0 px-2 pt-2">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-base-content/50">
                 <AnimatedShinyText>Navigation</AnimatedShinyText>
               </p>
             </div>
-            <ul className="menu w-full gap-1 rounded-box">
-              <li>
-                <button
-                  type="button"
-                  className={activePage === "dashboard" ? "active font-semibold" : ""}
-                  onClick={() => navigateTo("dashboard")}
+            <div className="flex-1 overflow-y-auto">
+              <ul className="menu w-full gap-1 rounded-box">
+                <li>
+                  <button
+                    type="button"
+                    className={activePage === "dashboard" ? "active font-semibold" : ""}
+                    onClick={() => navigateTo("dashboard")}
+                  >
+                    Dashboard
+                  </button>
+                </li>
+                <li>
+                  <details
+                    open={
+                      activePage === "municipalities" ||
+                      activePage === "suppliers" ||
+                      activePage === "products"
+                    }
+                  >
+                    <summary className="font-semibold">Master Data</summary>
+                    <ul>
+                      <li>
+                        <button
+                          type="button"
+                          className={activePage === "municipalities" ? "active" : ""}
+                          onClick={() => navigateTo("municipalities")}
+                        >
+                          Municipalities
+                        </button>
+                      </li>
+                      <li>
+                        <button
+                          type="button"
+                          className={activePage === "suppliers" ? "active" : ""}
+                          onClick={() => navigateTo("suppliers")}
+                        >
+                          Suppliers
+                        </button>
+                      </li>
+                      <li>
+                        <button
+                          type="button"
+                          className={activePage === "products" ? "active" : ""}
+                          onClick={() => navigateTo("products")}
+                        >
+                          Products
+                        </button>
+                      </li>
+                    </ul>
+                  </details>
+                </li>
+                <li>
+                  <details
+                    open={
+                      activePage === "inventory" ||
+                      activePage === "sales" ||
+                      activePage === "stock-movements"
+                    }
+                  >
+                    <summary className="font-semibold">Inventory Management</summary>
+                    <ul>
+                      <li>
+                        <button
+                          type="button"
+                          className={activePage === "inventory" ? "active" : ""}
+                          onClick={() => navigateTo("inventory")}
+                        >
+                          Inventory
+                        </button>
+                      </li>
+                      <li>
+                        <button
+                          type="button"
+                          className={activePage === "sales" ? "active" : ""}
+                          onClick={() => navigateTo("sales")}
+                        >
+                          Sales
+                        </button>
+                      </li>
+                      <li>
+                        <button
+                          type="button"
+                          className={activePage === "stock-movements" ? "active" : ""}
+                          onClick={() => navigateTo("stock-movements")}
+                        >
+                          Stock Movements
+                        </button>
+                      </li>
+                    </ul>
+                  </details>
+                </li>
+                <li>
+                  <details open={activePage === "product-summary" || activePage === "sales-report"}>
+                    <summary className="font-semibold">Reports</summary>
+                    <ul>
+                      <li>
+                        <button
+                          type="button"
+                          className={activePage === "product-summary" ? "active" : ""}
+                          onClick={() => navigateTo("product-summary")}
+                        >
+                          Product Summary
+                        </button>
+                      </li>
+                      <li>
+                        <button
+                          type="button"
+                          className={activePage === "sales-report" ? "active" : ""}
+                          onClick={() => navigateTo("sales-report")}
+                        >
+                          Sales Report
+                        </button>
+                      </li>
+                    </ul>
+                  </details>
+                </li>
+
+                {user?.role === "admin" && (
+                  <li>
+                    <details open={activePage === "users"}>
+                      <summary className="font-semibold">Master Control</summary>
+                      <ul>
+                        <li>
+                          <button
+                            type="button"
+                            className={activePage === "users" ? "active" : ""}
+                            onClick={() => navigateTo("users")}
+                          >
+                            User Administration
+                          </button>
+                        </li>
+                      </ul>
+                    </details>
+                  </li>
+                )}
+
+              </ul>
+            </div>
+
+            <div className="mt-auto shrink-0 border-t border-base-300 p-4 pb-0">
+              <div className="mb-4 flex items-center px-4">
+                <div className="avatar placeholder">
+                  <div className="flex w-10 items-center justify-center rounded-full bg-primary text-primary-content">
+                    <span className="text-lg font-bold">
+                      {user?.username?.charAt(0).toUpperCase() || "?"}
+                    </span>
+                  </div>
+                </div>
+                <div className="ml-3 flex flex-col">
+                  <span className="text-sm font-bold leading-none">{user?.username}</span>
+                  <span className="mt-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">
+                    {user?.role || "Administrator"}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost w-full justify-start text-error hover:bg-error/10 hover:text-error"
+                onClick={handleLogout}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="mr-2 h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
                 >
-                  Dashboard
-                </button>
-              </li>
-              <li>
-                <details
-                  open={
-                    activePage === "municipalities" ||
-                    activePage === "suppliers" ||
-                    activePage === "products"
-                  }
-                >
-                  <summary className="font-semibold">Master Data</summary>
-                  <ul>
-                    <li>
-                      <button
-                        type="button"
-                        className={activePage === "municipalities" ? "active" : ""}
-                        onClick={() => navigateTo("municipalities")}
-                      >
-                        Municipalities
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        type="button"
-                        className={activePage === "suppliers" ? "active" : ""}
-                        onClick={() => navigateTo("suppliers")}
-                      >
-                        Suppliers
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        type="button"
-                        className={activePage === "products" ? "active" : ""}
-                        onClick={() => navigateTo("products")}
-                      >
-                        Products
-                      </button>
-                    </li>
-                  </ul>
-                </details>
-              </li>
-              <li>
-                <details
-                  open={
-                    activePage === "inventory" ||
-                    activePage === "sales" ||
-                    activePage === "stock-movements"
-                  }
-                >
-                  <summary className="font-semibold">Inventory Management</summary>
-                  <ul>
-                    <li>
-                      <button
-                        type="button"
-                        className={activePage === "inventory" ? "active" : ""}
-                        onClick={() => navigateTo("inventory")}
-                      >
-                        Inventory
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        type="button"
-                        className={activePage === "sales" ? "active" : ""}
-                        onClick={() => navigateTo("sales")}
-                      >
-                        Sales
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        type="button"
-                        className={activePage === "stock-movements" ? "active" : ""}
-                        onClick={() => navigateTo("stock-movements")}
-                      >
-                        Stock Movements
-                      </button>
-                    </li>
-                  </ul>
-                </details>
-              </li>
-              <li>
-                <details open={activePage === "product-summary" || activePage === "sales-report"}>
-                  <summary className="font-semibold">Reports</summary>
-                  <ul>
-                    <li>
-                      <button
-                        type="button"
-                        className={activePage === "product-summary" ? "active" : ""}
-                        onClick={() => navigateTo("product-summary")}
-                      >
-                        Product Summary
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        type="button"
-                        className={activePage === "sales-report" ? "active" : ""}
-                        onClick={() => navigateTo("sales-report")}
-                      >
-                        Sales Report
-                      </button>
-                    </li>
-                  </ul>
-                </details>
-              </li>
-            </ul>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                  />
+                </svg>
+                Sign Out
+              </button>
+            </div>
           </div>
         </aside>
-      </div>
-    </main>
+      </div >
+    </main >
   );
 }
 

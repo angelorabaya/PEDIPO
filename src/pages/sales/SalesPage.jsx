@@ -39,12 +39,15 @@ function SalesPage({
   onCreateSale,
   onUpdateSale,
   onDeleteSale,
+  isAdmin,
 }) {
   const modalRef = useRef(null);
+  const imagePreviewRef = useRef(null);
   const tableWrapperRef = useRef(null);
   const tableHeadRef = useRef(null);
   const paginationRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
@@ -58,6 +61,10 @@ function SalesPage({
 
   const productMap = useMemo(
     () => new Map(products.map((item) => [item.id, item.name])),
+    [products],
+  );
+  const productImageMap = useMemo(
+    () => new Map(products.map((item) => [item.id, item.image ?? null])),
     [products],
   );
   const stockByProduct = useMemo(() => {
@@ -342,9 +349,8 @@ function SalesPage({
           {feedback ? (
             <div
               role="alert"
-              className={`alert mb-4 ${
-                feedback.type === "error" ? "alert-error" : "alert-success"
-              }`}
+              className={`alert mb-4 ${feedback.type === "error" ? "alert-error" : "alert-success"
+                }`}
             >
               <span>{feedback.text}</span>
             </div>
@@ -362,6 +368,7 @@ function SalesPage({
               <thead ref={tableHeadRef}>
                 <tr>
                   <th>ID</th>
+                  <th>Image</th>
                   <th>Product</th>
                   <th>Quantity</th>
                   <th>Unit Price</th>
@@ -374,6 +381,28 @@ function SalesPage({
                 {pagedSales.map((sale) => (
                   <tr key={sale.id}>
                     <td>{sale.id}</td>
+                    <td>
+                      {productImageMap.get(sale.product_id) ? (
+                        <img
+                          src={productImageMap.get(sale.product_id)}
+                          alt={productMap.get(sale.product_id) ?? "Product"}
+                          className="h-10 w-10 cursor-pointer rounded object-cover transition-opacity hover:opacity-75"
+                          onClick={() => {
+                            setPreviewImage({
+                              src: productImageMap.get(sale.product_id),
+                              name: productMap.get(sale.product_id) ?? "Product",
+                            });
+                            imagePreviewRef.current?.showModal();
+                          }}
+                        />
+                      ) : (
+                        <span className="inline-flex h-10 w-10 items-center justify-center rounded bg-base-200 text-base-content/40">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="size-5">
+                            <path d="M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-5z" />
+                          </svg>
+                        </span>
+                      )}
+                    </td>
                     <td>{productMap.get(sale.product_id) ?? `Product #${sale.product_id}`}</td>
                     <td>{sale.quantity}</td>
                     <td>{Number(sale.unit_price).toFixed(2)}</td>
@@ -397,29 +426,31 @@ function SalesPage({
                             <path d="M3 17.25V21h3.75l11.02-11.02-3.75-3.75L3 17.25zm17.71-10.04a1.003 1.003 0 000-1.42l-2.5-2.5a1.003 1.003 0 00-1.42 0l-1.96 1.96 3.75 3.75 2.13-1.79z" />
                           </svg>
                         </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline btn-error btn-square"
-                          title="Delete"
-                          aria-label={`Delete sale ${sale.id}`}
-                          onClick={() => handleDeleteSale(sale.id)}
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 24 24"
-                            fill="currentColor"
-                            className="size-4"
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline btn-error btn-square"
+                            title="Delete"
+                            aria-label={`Delete sale ${sale.id}`}
+                            onClick={() => handleDeleteSale(sale.id)}
                           >
-                            <path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z" />
-                          </svg>
-                        </button>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                              className="size-4"
+                            >
+                              <path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z" />
+                            </svg>
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
                 ))}
                 {pagedSales.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center text-base-content/70">
+                    <td colSpan={8} className="text-center text-base-content/70">
                       No sales found.
                     </td>
                   </tr>
@@ -459,80 +490,104 @@ function SalesPage({
       </article>
 
       <dialog ref={modalRef} className="modal">
-        <div className="modal-box">
+        <div className="modal-box max-w-3xl">
           <h3 className="text-lg font-bold">{editingId ? "Update Sale" : "Add Sale"}</h3>
 
-          <form onSubmit={handleSave} className="space-y-3 pt-4">
-            <label className="form-control w-full">
-              <div className="label">
-                <span className="label-text font-semibold">Product</span>
-              </div>
-              <select
-                className="select select-bordered w-full"
-                value={draft.product_id}
-                onChange={(event) => handleProductChange(event.target.value)}
-              >
-                <option value="">Select Product</option>
-                {products
-                  .slice()
-                  .sort((a, b) => a.name.localeCompare(b.name))
-                  .map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
+          <form onSubmit={handleSave} className="pt-4">
+            <div className="flex gap-6">
+              <div className="flex-1 space-y-3">
+                <label className="form-control w-full">
+                  <div className="label">
+                    <span className="label-text font-semibold">Product</span>
+                  </div>
+                  <select
+                    className="select select-bordered w-full"
+                    value={draft.product_id}
+                    onChange={(event) => handleProductChange(event.target.value)}
+                  >
+                    <option value="">Select Product</option>
+                    {products
+                      .slice()
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
 
-            <label className="form-control w-full">
-              <div className="label">
-                <span className="label-text font-semibold">Quantity</span>
-                <span className="label-text-alt text-base-content/70">
-                  Available: {availableForSelected}
-                </span>
-              </div>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                max={Math.max(0, availableForSelected)}
-                className="input input-bordered w-full"
-                value={draft.quantity}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, quantity: event.target.value }))
-                }
-              />
-            </label>
+                <label className="form-control w-full">
+                  <div className="label">
+                    <span className="label-text font-semibold">Quantity</span>
+                    <span className="label-text-alt text-base-content/70">
+                      Available: {availableForSelected}
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    max={Math.max(0, availableForSelected)}
+                    className="input input-bordered w-full"
+                    value={draft.quantity}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, quantity: event.target.value }))
+                    }
+                  />
+                </label>
 
-            <label className="form-control w-full">
-              <div className="label">
-                <span className="label-text font-semibold">Unit Price</span>
-              </div>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                className="input input-bordered w-full"
-                value={draft.unit_price}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, unit_price: event.target.value }))
-                }
-              />
-            </label>
+                <label className="form-control w-full">
+                  <div className="label">
+                    <span className="label-text font-semibold">Unit Price</span>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className="input input-bordered w-full"
+                    value={draft.unit_price}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, unit_price: event.target.value }))
+                    }
+                  />
+                </label>
 
-            <label className="form-control w-full">
-              <div className="label">
-                <span className="label-text font-semibold">Sale Date</span>
+                <label className="form-control w-full">
+                  <div className="label">
+                    <span className="label-text font-semibold">Sale Date</span>
+                  </div>
+                  <input
+                    type="datetime-local"
+                    className="input input-bordered w-full"
+                    value={draft.sale_date}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, sale_date: event.target.value }))
+                    }
+                  />
+                </label>
               </div>
-              <input
-                type="datetime-local"
-                className="input input-bordered w-full"
-                value={draft.sale_date}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, sale_date: event.target.value }))
-                }
-              />
-            </label>
+
+              <div className="flex flex-col items-center gap-2 pt-8">
+                <div className="flex h-[200px] w-[200px] shrink-0 items-center justify-center overflow-hidden rounded-lg border border-base-300 bg-base-200">
+                  {draft.product_id && productImageMap.get(Number(draft.product_id)) ? (
+                    <img
+                      src={productImageMap.get(Number(draft.product_id))}
+                      alt={productMap.get(Number(draft.product_id)) ?? "Product"}
+                      className="h-full w-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-1 text-base-content/30">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="size-12">
+                        <path d="M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-5z" />
+                      </svg>
+                      <span className="text-xs">No Image</span>
+                    </div>
+                  )}
+                </div>
+                <span className="text-xs text-base-content/50">Product Image</span>
+              </div>
+            </div>
 
             <div className="modal-action">
               <button type="button" className="btn btn-ghost" onClick={closeModal}>
@@ -543,6 +598,29 @@ function SalesPage({
               </button>
             </div>
           </form>
+        </div>
+        <form method="dialog" className="modal-backdrop">
+          <button type="submit">close</button>
+        </form>
+      </dialog>
+
+      <dialog ref={imagePreviewRef} className="modal">
+        <div className="modal-box max-w-2xl p-4">
+          {previewImage ? (
+            <>
+              <h3 className="mb-3 text-lg font-bold">{previewImage.name}</h3>
+              <img
+                src={previewImage.src}
+                alt={previewImage.name}
+                className="w-full rounded object-contain"
+              />
+            </>
+          ) : null}
+          <div className="modal-action">
+            <form method="dialog">
+              <button type="submit" className="btn btn-ghost">Close</button>
+            </form>
+          </div>
         </div>
         <form method="dialog" className="modal-backdrop">
           <button type="submit">close</button>
