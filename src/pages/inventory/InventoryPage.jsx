@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatDate } from "../../utils/dateUtils";
 
 const BREAKPOINT_SM_PX = 640;
 const BREAKPOINT_LG_PX = 1024;
@@ -200,7 +201,7 @@ function InventoryPage({ municipalities, products, sales, stockMovements }) {
                         )}
                       </td>
                       <td>
-                        {row.last_updated ? new Date(row.last_updated).toLocaleString() : "-"}
+                        {formatDate(row.last_updated)}
                       </td>
                     </tr>
                   );

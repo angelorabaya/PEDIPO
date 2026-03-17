@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatDate } from "../../utils/dateUtils";
 
 const BREAKPOINT_SM_PX = 640;
 const BREAKPOINT_LG_PX = 1024;
@@ -96,7 +97,7 @@ function SalesPage({
         item.quantity,
         Number(item.unit_price).toFixed(2),
         Number(item.quantity * item.unit_price).toFixed(2),
-        new Date(item.sale_date).toLocaleString(),
+        formatDate(item.sale_date),
       ]
         .join(" ")
         .toLowerCase()
@@ -407,7 +408,7 @@ function SalesPage({
                     <td>{sale.quantity}</td>
                     <td>{Number(sale.unit_price).toFixed(2)}</td>
                     <td>{Number(sale.quantity * sale.unit_price).toFixed(2)}</td>
-                    <td>{new Date(sale.sale_date).toLocaleString()}</td>
+                    <td>{formatDate(sale.sale_date)}</td>
                     <td className="text-right">
                       <div className="inline-flex gap-2">
                         <button

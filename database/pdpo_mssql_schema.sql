@@ -161,7 +161,49 @@ BEGIN
 END;
 GO
 
--- 9. Sample Data Inserter
+-- 9. Users (Authentication)
+CREATE TABLE users (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    username NVARCHAR(50) NOT NULL UNIQUE,
+    password_hash NVARCHAR(255) NOT NULL,
+    email NVARCHAR(100) NULL,
+    role NVARCHAR(20) DEFAULT 'user',
+    created_at DATETIME DEFAULT GETDATE(),
+    updated_at DATETIME DEFAULT GETDATE()
+);
+
+-- Create a filtered unique index on email (only non-NULL emails must be unique)
+CREATE UNIQUE NONCLUSTERED INDEX UQ_users_email_filtered
+ON users(email) WHERE email IS NOT NULL;
+
+-- Insert default admin user (password: oposa911)
+INSERT INTO users (username, password_hash, role)
+VALUES ('admin', '$2a$10$U.A0y4l7xN8D919V2cK10u2J7Q8B2nO0sY1L9B2R0zV2kM4yI7', 'admin');
+GO
+
+-- 10. Audit Logs (Activity Trail)
+CREATE TABLE audit_logs (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    user_id INT NULL,
+    username NVARCHAR(50) NULL,
+    action NVARCHAR(50) NOT NULL,
+    entity_type NVARCHAR(50) NOT NULL,
+    entity_id INT NULL,
+    old_values NVARCHAR(MAX) NULL,
+    new_values NVARCHAR(MAX) NULL,
+    ip_address NVARCHAR(45) NULL,
+    created_at DATETIME NOT NULL DEFAULT GETDATE(),
+    CONSTRAINT FK_AuditLogs_Users FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Indexes for common audit queries
+CREATE INDEX IX_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX IX_audit_logs_entity_type ON audit_logs(entity_type);
+CREATE INDEX IX_audit_logs_entity_id ON audit_logs(entity_id);
+CREATE INDEX IX_audit_logs_created_at ON audit_logs(created_at DESC);
+GO
+
+-- 11. Sample Data Inserter
 -- SQL Server doesn't support INSERT IGNORE; we use a WHERE NOT EXISTS pattern
 INSERT INTO municipalities (name)
 SELECT name FROM (VALUES 
@@ -184,3 +226,4 @@ FROM products p
 JOIN municipalities m ON p.municipality_id = m.id
 LEFT JOIN inventory i ON p.id = i.product_id;
 GO
+

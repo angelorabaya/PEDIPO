@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatDate } from "../../utils/dateUtils";
 
 const BREAKPOINT_SM_PX = 640;
 const BREAKPOINT_LG_PX = 1024;
@@ -85,7 +86,7 @@ function StockMovementsPage({
         item.quantity,
         item.payment_status,
         item.remarks,
-        new Date(item.movement_date).toLocaleString(),
+        formatDate(item.movement_date),
       ]
         .join(" ")
         .toLowerCase()
@@ -359,7 +360,7 @@ function StockMovementsPage({
                     </td>
                     <td>{movement.quantity}</td>
                     <td>{movement.payment_status}</td>
-                    <td>{new Date(movement.movement_date).toLocaleString()}</td>
+                    <td>{formatDate(movement.movement_date)}</td>
                     <td className="max-w-56 truncate">{movement.remarks || "-"}</td>
                     <td className="text-right">
                       <div className="inline-flex gap-2">

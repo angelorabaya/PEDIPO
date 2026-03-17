@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { formatDate } from "../../utils/dateUtils";
 
 const BREAKPOINT_SM_PX = 640;
 const BREAKPOINT_LG_PX = 1024;
@@ -408,7 +409,7 @@ function ProductsPage({
                       </span>
                     </td>
                     <td className="max-w-56 truncate">{product.remarks || "-"}</td>
-                    <td>{new Date(product.created_at).toLocaleString()}</td>
+                    <td>{formatDate(product.created_at)}</td>
                     <td className="text-right">
                       <div className="inline-flex gap-2">
                         <button

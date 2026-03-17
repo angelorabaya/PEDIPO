@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { formatDate } from "../../../utils/dateUtils";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:4000`;
 
-function formatDate(dateStr) {
-    return new Date(dateStr).toLocaleDateString("en-PH", {
+function formatReportDate(dateStr) {
+    return formatDate(dateStr, {
         year: "numeric",
         month: "long",
         day: "numeric",
@@ -12,8 +13,17 @@ function formatDate(dateStr) {
 
 function SalesReportPage() {
     const modalRef = useRef(null);
-    const [dateFrom, setDateFrom] = useState("");
-    const [dateTo, setDateTo] = useState("");
+
+    const getTodayString = () => {
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+    };
+
+    const [dateFrom, setDateFrom] = useState(getTodayString());
+    const [dateTo, setDateTo] = useState(getTodayString());
     const [confirmedFrom, setConfirmedFrom] = useState(null);
     const [confirmedTo, setConfirmedTo] = useState(null);
     const [sales, setSales] = useState([]);
@@ -269,7 +279,7 @@ function SalesReportPage() {
                                 return (
                                     <tr key={sale.id} className="border-b border-gray-300">
                                         <td className="px-2 py-1">
-                                            {new Date(sale.sale_date).toLocaleDateString("en-PH", {
+                                            {formatDate(sale.sale_date, {
                                                 year: "numeric",
                                                 month: "short",
                                                 day: "numeric",

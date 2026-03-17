@@ -387,6 +387,18 @@ app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+app.get("/api/audit-logs", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query(
+      "SELECT id, user_id, username, action, entity_type, entity_id, old_values, new_values, ip_address, created_at FROM audit_logs ORDER BY created_at DESC"
+    );
+    res.json(result.recordset);
+  } catch (error) {
+    sqlErrorResponse(error, res);
+  }
+});
+
 
 // ── Municipalities ───────────────────────────────────────────────────────────
 
@@ -672,6 +684,12 @@ app.put("/api/products/:id", requireAuth, async (req, res) => {
 
   try {
     const pool = await getPool();
+
+    const oldProductRow = await pool.request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM products WHERE id = @id");
+    const oldProduct = oldProductRow.recordset[0];
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .input("name", sql.NVarChar, name)

@@ -1,5 +1,6 @@
 import { useState, useRef, useMemo } from "react";
 import FuzzySearch from "fuzzy-search";
+import { formatDate } from "../../utils/dateUtils";
 
 function UsersPage({
     users,
@@ -168,7 +169,7 @@ function UsersPage({
                                         </span>
                                     </td>
                                     <td className="text-xs text-base-content/60">
-                                        {new Date(item.created_at).toLocaleString("en-PH", {
+                                        {formatDate(item.created_at, {
                                             year: "numeric",
                                             month: "short",
                                             day: "numeric",

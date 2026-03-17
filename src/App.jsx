@@ -14,6 +14,7 @@ import SalesPage from "./pages/sales/SalesPage";
 import StockMovementsPage from "./pages/stock-movements/StockMovementsPage";
 import SuppliersPage from "./pages/suppliers/SuppliersPage";
 import LoginPage from "./pages/auth/LoginPage";
+import ActivityLogsPage from "./pages/activity-logs/ActivityLogsPage";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:4000`;
 
@@ -28,6 +29,7 @@ const VALID_PAGES = new Set([
   "product-summary",
   "sales-report",
   "users", // <-- Added users page
+  "activity-logs",
 ]);
 
 async function apiRequest(path, options = {}) {
@@ -110,7 +112,8 @@ function App() {
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [user, setUser] = useState(null);
-  const [users, setUsers] = useState([]); // List of all users from backend
+  const [allUsers, setAllUsers] = useState([]); // List of all users from backend
+  const [activityLogs, setActivityLogs] = useState([]);
   const [isInitializingAuth, setIsInitializingAuth] = useState(true);
 
   const navigateTo = (page, options = {}) => {
@@ -124,45 +127,106 @@ function App() {
     }
   };
 
+  const fetchMunicipalities = useCallback(async () => {
+    try {
+      const data = await apiRequest("/api/municipalities");
+      setMunicipalities(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to fetch municipalities:", err);
+      setLoadError(err.message || "Failed to load municipalities.");
+    }
+  }, []);
+
+  const fetchSuppliers = useCallback(async () => {
+    try {
+      const data = await apiRequest("/api/suppliers");
+      setSuppliers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to fetch suppliers:", err);
+      setLoadError(err.message || "Failed to load suppliers.");
+    }
+  }, []);
+
+  const fetchProducts = useCallback(async () => {
+    try {
+      const data = await apiRequest("/api/products");
+      setProducts(normalizeProducts(Array.isArray(data) ? data : []));
+    } catch (err) {
+      console.error("Failed to fetch products:", err);
+      setLoadError(err.message || "Failed to load products.");
+    }
+  }, []);
+
+  const fetchSales = useCallback(async () => {
+    try {
+      const data = await apiRequest("/api/sales");
+      setSales(normalizeSales(Array.isArray(data) ? data : []));
+    } catch (err) {
+      console.error("Failed to fetch sales:", err);
+      setLoadError(err.message || "Failed to load sales.");
+    }
+  }, []);
+
+  const fetchStockMovements = useCallback(async () => {
+    try {
+      const data = await apiRequest("/api/stock-movements");
+      setStockMovements(normalizeStockMovements(Array.isArray(data) ? data : []));
+    } catch (err) {
+      console.error("Failed to fetch stock movements:", err);
+      setLoadError(err.message || "Failed to load stock movements.");
+    }
+  }, []);
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      const data = await apiRequest("/api/users");
+      setAllUsers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to fetch users:", err);
+      setLoadError(err.message || "Failed to load users.");
+    }
+  }, []);
+
+  const fetchActivityLogs = useCallback(async () => {
+    try {
+      const data = await apiRequest("/api/audit-logs");
+      setActivityLogs(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to fetch activity logs:", err);
+      setLoadError(err.message || "Failed to load activity logs.");
+    }
+  }, []);
+
   const loadAllData = useCallback(async () => {
     setIsLoadingData(true);
     setLoadError("");
     try {
-      // Base requests for everyone
-      const requests = [
-        apiRequest("/api/municipalities"),
-        apiRequest("/api/suppliers"),
-        apiRequest("/api/products"),
-        apiRequest("/api/sales"),
-        apiRequest("/api/stock-movements"),
-      ];
+      await Promise.all([
+        fetchMunicipalities(),
+        fetchSuppliers(),
+        fetchProducts(),
+        fetchSales(),
+        fetchStockMovements(),
+      ]);
 
-      // Admin-only requests
       const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
       if (currentUser?.role === "admin") {
-        requests.push(apiRequest("/api/users"));
-      } else {
-        requests.push(Promise.resolve(null)); // Placeholder
-      }
-
-      const [m, s, p, saleRows, movements, allUsers] = await Promise.all(requests);
-
-      setMunicipalities(Array.isArray(m) ? m : []);
-      setSuppliers(Array.isArray(s) ? s : []);
-      setProducts(normalizeProducts(Array.isArray(p) ? p : []));
-      setSales(normalizeSales(Array.isArray(saleRows) ? saleRows : []));
-      setStockMovements(
-        normalizeStockMovements(Array.isArray(movements) ? movements : []),
-      );
-      if (allUsers) {
-        setUsers(Array.isArray(allUsers) ? allUsers : []);
+        await Promise.all([
+          fetchUsers(),
+          fetchActivityLogs(),
+        ]);
       }
     } catch (error) {
-      setLoadError(error.message || "Failed to load data from backend.");
+      // Errors are already set by individual fetch functions
+      // This catch block is mainly for unexpected errors during Promise.all
+      if (!loadError) { // Only set if no specific error was set by a sub-fetch
+        setLoadError(error.message || "Failed to load data from backend.");
+      }
     } finally {
       setIsLoadingData(false);
     }
-  }, []);
+  }, [fetchMunicipalities, fetchSuppliers, fetchProducts, fetchSales, fetchStockMovements, fetchUsers, fetchActivityLogs, loadError]);
+
 
   const createUserAccount = async (payload) => {
     await apiRequest("/api/users", {
@@ -447,13 +511,27 @@ function App() {
       }
       return (
         <UsersPage
-          users={users}
+          users={allUsers}
           onCreateUser={createUserAccount}
           onUpdateUser={updateUserAccount}
           onDeleteUser={deleteUserAccount}
           currentUserId={user?.id}
         />
       );
+    }
+
+    if (activePage === "activity-logs") {
+      if (user?.role !== "admin") {
+        return (
+          <section className="card border border-error/30 bg-base-100 shadow-sm">
+            <div className="card-body">
+              <h2 className="card-title text-error">Forbidden</h2>
+              <p>You do not have permission to view this page.</p>
+            </div>
+          </section>
+        );
+      }
+      return <ActivityLogsPage logs={activityLogs} />;
     }
 
     if (activePage === "product-summary") {
@@ -536,7 +614,11 @@ function App() {
                                   ? "Inventory Management - Stock Movements"
                                   : activePage === "users"
                                     ? "Master Control - User Administration"
-                                    : "Reports - Product Summary"}
+                                    : activePage === "activity-logs"
+                                      ? "Master Control - Activity Logs"
+                                      : activePage === "product-summary"
+                                        ? "Reports - Product Summary"
+                                        : "Reports - Sales Report"}
                   </h1>
                 </BlurReveal>
               </div>
@@ -740,6 +822,15 @@ function App() {
                             onClick={() => navigateTo("users")}
                           >
                             User Administration
+                          </button>
+                        </li>
+                        <li>
+                          <button
+                            type="button"
+                            className={activePage === "activity-logs" ? "active" : ""}
+                            onClick={() => navigateTo("activity-logs")}
+                          >
+                            Activity Logs
                           </button>
                         </li>
                       </ul>
